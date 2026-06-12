@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.Map;
+
 @Configuration
 public class ChatClientConfig {
 
@@ -25,9 +27,16 @@ public class ChatClientConfig {
     }
 
     @Bean
-    ChatClient ragChatClient(@Qualifier("deepSeekChatModel") ChatModel chatModel,
-                             VectorStore vectorStore,
-                             ChatMemory chatMemory) {
+    Map<String, ChatClient> chatClients(@Qualifier("deepSeekChatModel") ChatModel deepSeekChatModel,
+                                        @Qualifier("openAiChatModel") ChatModel openAiChatModel,
+                                        VectorStore vectorStore,
+                                        ChatMemory chatMemory) {
+        return Map.of(
+                "deepseek", buildClient(deepSeekChatModel, vectorStore, chatMemory),
+                "openai", buildClient(openAiChatModel, vectorStore, chatMemory));
+    }
+
+    private static ChatClient buildClient(ChatModel chatModel, VectorStore vectorStore, ChatMemory chatMemory) {
         return ChatClient.builder(chatModel)
                 .defaultAdvisors(
                         QuestionAnswerAdvisor.builder(vectorStore)

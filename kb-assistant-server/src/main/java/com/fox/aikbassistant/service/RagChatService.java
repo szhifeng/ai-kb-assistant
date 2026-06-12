@@ -1,9 +1,9 @@
 package com.fox.aikbassistant.service;
 
+import com.fox.aikbassistant.config.ChatClientRouter;
 import com.fox.aikbassistant.model.Citation;
 import com.fox.aikbassistant.ratelimit.RateLimitExceededException;
 import com.fox.aikbassistant.ratelimit.TokenRateLimiter;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
@@ -12,20 +12,29 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class RagChatService {
 
     private static final int TOP_K = 4;
 
-    private final ChatClient chatClient;
+    private final ChatClientRouter chatClientRouter;
     private final VectorStore vectorStore;
     private final TokenRateLimiter rateLimiter;
+    private final com.fox.aikbassistant.tool.SqlQueryTool sqlQueryTool;
+    private final com.fox.aikbassistant.tool.WebSearchTool webSearchTool;
 
-    public RagChatService(ChatClient ragChatClient, VectorStore vectorStore, TokenRateLimiter rateLimiter) {
-        this.chatClient = ragChatClient;
+    public RagChatService(ChatClientRouter chatClientRouter,
+                          VectorStore vectorStore,
+                          TokenRateLimiter rateLimiter,
+                          com.fox.aikbassistant.tool.SqlQueryTool sqlQueryTool,
+                          com.fox.aikbassistant.tool.WebSearchTool webSearchTool) {
+        this.chatClientRouter = chatClientRouter;
         this.vectorStore = vectorStore;
         this.rateLimiter = rateLimiter;
+        this.sqlQueryTool = sqlQueryTool;
+        this.webSearchTool = webSearchTool;
     }
 
     public Flux<String> stream(String question) {
@@ -33,13 +42,19 @@ public class RagChatService {
     }
 
     public Flux<String> stream(String question, String conversationId) {
+        return stream(question, conversationId, "deepseek");
+    }
+
+    public Flux<String> stream(String question, String conversationId, String model) {
         long estimatedTokens = estimateTokens(question);
         if (!rateLimiter.tryAcquire(conversationId, estimatedTokens)) {
             return Flux.error(new RateLimitExceededException("token 配额超限"));
         }
         rateLimiter.record(conversationId, estimatedTokens);
-        return chatClient.prompt()
+        return chatClientRouter.resolve(model).prompt()
                 .user(question)
+                .tools(sqlQueryTool, webSearchTool)
+                .toolContext(Map.of("conversationId", conversationId))
                 .advisors(advisor -> advisor.param(ChatMemory.CONVERSATION_ID, conversationId))
                 .stream().content();
     }

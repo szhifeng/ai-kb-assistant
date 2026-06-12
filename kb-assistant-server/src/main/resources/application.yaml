@@ -29,3 +29,6 @@ kb:
     window-seconds: 60
     max-tokens-per-window: 100000
     overflow-strategy: reject
+
+tavily:
+  api-key: ${TAVILY_API_KEY:}
