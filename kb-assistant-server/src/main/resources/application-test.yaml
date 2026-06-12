@@ -1,0 +1,6 @@
+spring:
+  ai:
+    openai:
+      api-key: test-key
+    deepseek:
+      api-key: test-key
