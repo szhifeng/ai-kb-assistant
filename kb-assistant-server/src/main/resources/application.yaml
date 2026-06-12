@@ -13,13 +13,11 @@ spring:
     openai:
       api-key: ${OPENAI_API_KEY}
       embedding:
-        options:
-          model: text-embedding-3-small
+        model: text-embedding-3-small
     deepseek:
       api-key: ${DEEPSEEK_API_KEY}
       chat:
-        options:
-          model: deepseek-chat
+        model: deepseek-chat
     vectorstore:
       pgvector:
         index-type: HNSW
