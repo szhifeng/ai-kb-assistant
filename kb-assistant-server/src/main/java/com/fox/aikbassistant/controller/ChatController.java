@@ -27,8 +27,9 @@ public class ChatController {
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<String>> stream(@RequestParam String question) {
-        Flux<ServerSentEvent<String>> tokens = ragChatService.stream(question)
+    public Flux<ServerSentEvent<String>> stream(@RequestParam String question,
+                                                @RequestParam(defaultValue = "default") String conversationId) {
+        Flux<ServerSentEvent<String>> tokens = ragChatService.stream(question, conversationId)
                 .map(token -> ServerSentEvent.<String>builder().event("token").data(token).build());
 
         Mono<ServerSentEvent<String>> citationFrame = Mono.fromCallable(() ->

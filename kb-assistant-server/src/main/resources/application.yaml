@@ -23,3 +23,9 @@ spring:
         index-type: HNSW
         distance-type: COSINE_DISTANCE
         initialize-schema: true
+
+kb:
+  ratelimit:
+    window-seconds: 60
+    max-tokens-per-window: 100000
+    overflow-strategy: reject

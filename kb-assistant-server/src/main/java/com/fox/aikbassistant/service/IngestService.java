@@ -16,7 +16,7 @@ import java.util.List;
 public class IngestService {
 
     private final VectorStore vectorStore;
-    private final TokenTextSplitter splitter = new TokenTextSplitter();
+    private final TokenTextSplitter splitter = TokenTextSplitter.builder().build();
 
     public IngestService(VectorStore vectorStore) {
         this.vectorStore = vectorStore;
