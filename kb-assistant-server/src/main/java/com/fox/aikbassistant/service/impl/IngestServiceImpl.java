@@ -5,6 +5,7 @@ import com.fox.aikbassistant.model.DocumentInfo;
 import com.fox.aikbassistant.model.IngestResult;
 import com.fox.aikbassistant.model.UploadAudit;
 import com.fox.aikbassistant.service.IngestService;
+import com.fox.aikbassistant.util.DocumentTextCleaner;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.markdown.MarkdownDocumentReader;
 import org.springframework.ai.reader.markdown.config.MarkdownDocumentReaderConfig;
@@ -15,6 +16,8 @@ import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.core.io.Resource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.sql.ResultSet;
@@ -27,9 +30,18 @@ import java.util.UUID;
 @Service
 public class IngestServiceImpl implements IngestService {
 
+    private static final Logger log = LoggerFactory.getLogger(IngestServiceImpl.class);
+
+    private static final int SPLIT_MIN_CHUNK_SIZE_CHARS = 200;
+    private static final int SPLIT_MIN_CHUNK_LENGTH_TO_EMBED = 20;
     private final VectorStore vectorStore;
     private final JdbcTemplate jdbcTemplate;
-    private final TokenTextSplitter splitter = TokenTextSplitter.builder().build();
+    private final TokenTextSplitter splitter = TokenTextSplitter.builder()
+            .withMinChunkSizeChars(SPLIT_MIN_CHUNK_SIZE_CHARS)
+            .withMinChunkLengthToEmbed(SPLIT_MIN_CHUNK_LENGTH_TO_EMBED)
+//            .withPunctuationMarks(List.of('?', '!', '\n', '。', '？', '！', '；'))
+            .withKeepSeparator(true)
+            .build();   //  令牌文本切分器
 
     public IngestServiceImpl(VectorStore vectorStore, JdbcTemplate jdbcTemplate) {
         this.vectorStore = vectorStore;
@@ -45,15 +57,26 @@ public class IngestServiceImpl implements IngestService {
     public IngestResult ingest(Resource resource, String source, long size, String uploaderEmail) {
         String auditId = UUID.randomUUID().toString();
         try {
-            List<Document> docs = read(resource, source);
-            List<Document> chunks = splitter.apply(docs);
+            log.info("Ingest start auditId={}, source={}, size={}", auditId, source, size);
+            List<Document> rawDocs = read(resource, source);
+            List<Document> docs = DocumentTextCleaner.clean(rawDocs);
+            List<Document> splitDocs = splitter.apply(docs);
+            List<Document> chunks = splitDocs.stream()
+                    .filter(d -> DocumentTextCleaner.isUsefulText(d.getText()))
+                    .toList();
+            log.info("Ingest split auditId={}, source={}, rawDocs={}, cleanedDocs={}, splitChunks={}, usefulChunks={}, minChunkChars={}, keepSeparator={}",
+                    auditId, source, rawDocs.size(), docs.size(), splitDocs.size(), chunks.size(), SPLIT_MIN_CHUNK_SIZE_CHARS, true);
             chunks.forEach(d -> d.getMetadata().put("source", source));
             vectorStore.add(chunks);
             IngestResult result = new IngestResult(source, chunks.size());
-            insertAudit(auditId, uploaderEmail, source, size, "success", "解析成功", chunks.size());
+            String message = chunks.isEmpty()
+                    ? "解析完成，但未提取到有效文本（可能为扫描件或乱码 PDF）"
+                    : "解析成功，入库有效片段 " + chunks.size() + " 个";
+            insertAudit(auditId, uploaderEmail, source, size, "success", message, chunks.size());
             return result;
         }
         catch (RuntimeException ex) {
+            log.warn("Ingest failed auditId={}, source={}, message={}", auditId, source, ex.getMessage(), ex);
             insertAudit(auditId, uploaderEmail, source, size, "failed", ex.getMessage(), null);
             throw ex;
         }
@@ -117,8 +140,7 @@ public class IngestServiceImpl implements IngestService {
 
     private List<Document> read(Resource resource, String source) {
         if (isMarkdownDocument(resource, source)) {
-            return new MarkdownDocumentReader(resource,
-                    MarkdownDocumentReaderConfig.builder().build()).get();
+            return new MarkdownDocumentReader(resource, MarkdownDocumentReaderConfig.builder().build()).get();
         }
         return new TikaDocumentReader(resource).get();
     }
@@ -131,8 +153,7 @@ public class IngestServiceImpl implements IngestService {
         return documentName != null && documentName.toLowerCase(Locale.ROOT).endsWith(".md");
     }
 
-    private void insertAudit(String id, String uploaderEmail, String source, long size,
-                             String status, String message, Integer chunkCount) {
+    private void insertAudit(String id, String uploaderEmail, String source, long size, String status, String message, Integer chunkCount) {
         String normalizedEmail = normalizeEmail(uploaderEmail);
         if (normalizedEmail != null) {
             ensureUser(normalizedEmail);
