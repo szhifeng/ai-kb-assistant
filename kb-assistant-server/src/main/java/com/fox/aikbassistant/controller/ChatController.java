@@ -45,16 +45,18 @@ public class ChatController {
                                                 @RequestParam(defaultValue = "false") boolean webSearchEnabled) {
         RagStreamResult result = ragChatService.stream(question, conversationId, model, webSearchEnabled);
 
-        Flux<ServerSentEvent<String>> tokens = result.tokens()
-                .map(token -> ServerSentEvent.<String>builder().event("token").data(token).build());
+        Flux<ServerSentEvent<String>> chunks = result.chunks()
+                .map(chunk -> ServerSentEvent.<String>builder()
+                        .event(chunk.type())
+                        .data(chunk.text())
+                        .build());
 
         Mono<ServerSentEvent<String>> citationFrame = Mono.fromCallable(() ->
                 ServerSentEvent.<String>builder()
                         .event("citations")
                         .data(writeCitations(result.citations()))
                         .build());
-
-        return tokens.concatWith(citationFrame);
+        return chunks.concatWith(citationFrame);
     }
 
     private String writeCitations(List<Citation> citations) {

@@ -3,6 +3,7 @@ package com.fox.aikbassistant.service.impl;
 import com.fox.aikbassistant.config.ChatClientRouter;
 import com.fox.aikbassistant.model.ChatAnswer;
 import com.fox.aikbassistant.model.Citation;
+import com.fox.aikbassistant.model.RagStreamChunk;
 import com.fox.aikbassistant.model.RagStreamResult;
 import com.fox.aikbassistant.ratelimit.RateLimitExceededException;
 import com.fox.aikbassistant.ratelimit.TokenRateLimiter;
@@ -10,9 +11,13 @@ import com.fox.aikbassistant.service.RagChatService;
 import com.fox.aikbassistant.tool.WebSearchTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -23,7 +28,9 @@ import java.util.stream.Collectors;
 @Service
 public class RagChatServiceImpl implements RagChatService {
 
-    private static final int TOP_K = 4;
+    private static final Logger log = LoggerFactory.getLogger(RagChatServiceImpl.class);
+
+    private static final int TOP_K = 4;  //    默认只返回匹配的前4条
 
     private static final String SYSTEM_PROMPT = """
             你是知识库问答助手。请严格根据下面提供的【知识库上下文】回答用户问题。
@@ -74,14 +81,21 @@ public class RagChatServiceImpl implements RagChatService {
 
     @Override
     public RagStreamResult stream(String question, String conversationId, String model, boolean webSearchEnabled) {
+        log.info("RAG stream start conversationId={}, model={}, webSearchEnabled={}, questionChars={}", conversationId, model, webSearchEnabled, safeLength(question));
         acquireQuota(question, conversationId);
         List<Document> docs = retrieve(question);
+        log.info("RAG stream retrieved conversationId={}, docs={}", conversationId, docs.size());
         ChatClient.ChatClientRequestSpec request = basePrompt(question, conversationId, model, docs, webSearchEnabled);
         if (webSearchEnabled) {
             request.tools(webSearchTool);
         }
-        Flux<String> tokens = request.stream().content();
-        return new RagStreamResult(tokens, toCitations(docs), conversationId);
+        Flux<RagStreamChunk> chunks = request.stream().chatResponse()
+                .doOnNext(RagChatServiceImpl::logStreamResponse)
+                .flatMapIterable(RagChatServiceImpl::toStreamChunks)
+                .doOnNext(chunk -> log.debug("RAG stream chunk type={}, chars={}", chunk.type(), safeLength(chunk.text())))
+                .doOnComplete(() -> log.info("RAG stream complete conversationId={}", conversationId))
+                .doOnError(ex -> log.warn("RAG stream failed conversationId={}, message={}", conversationId, ex.getMessage(), ex));
+        return new RagStreamResult(chunks, toCitations(docs), conversationId);
     }
 
     @Override
@@ -91,14 +105,22 @@ public class RagChatServiceImpl implements RagChatService {
 
     @Override
     public ChatAnswer call(String question, String conversationId, String model, boolean webSearchEnabled) {
+        log.info("RAG call start conversationId={}, model={}, webSearchEnabled={}, questionChars={}",
+                conversationId, model, webSearchEnabled, safeLength(question));
         acquireQuota(question, conversationId);
         List<Document> docs = retrieve(question);
+        log.info("RAG call retrieved conversationId={}, docs={}", conversationId, docs.size());
         ChatClient.ChatClientRequestSpec request = basePrompt(question, conversationId, model, docs, webSearchEnabled);
         if (webSearchEnabled) {
             request.tools(webSearchTool);
         }
-        String answer = request.call().content();
-        return new ChatAnswer(answer, toCitations(docs), conversationId);
+        ChatResponse response = request.call().chatResponse();
+        AssistantMessage output = response == null || response.getResult() == null ? null : response.getResult().getOutput();
+        String answer = output == null ? "" : output.getText();
+        String reasoning = output == null ? "" : reasoningText(output);
+        log.info("RAG call complete conversationId={}, reasoningChars={}, answerChars={}, metadataKeys={}",
+                conversationId, safeLength(reasoning), safeLength(answer), output == null ? List.of() : output.getMetadata().keySet());
+        return new ChatAnswer(answer, reasoning, toCitations(docs), conversationId);
     }
 
     private ChatClient.ChatClientRequestSpec basePrompt(String question,
@@ -140,6 +162,59 @@ public class RagChatServiceImpl implements RagChatService {
                         snippet(d.getText()),
                         d.getScore()))
                 .toList();
+    }
+
+    public static List<RagStreamChunk> toStreamChunks(ChatResponse response) {
+        if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
+            return List.of();
+        }
+        AssistantMessage output = response.getResult().getOutput();
+        String reasoning = reasoningText(output);
+        String answer = output.getText();
+        if ((reasoning == null || reasoning.isEmpty()) && (answer == null || answer.isEmpty())) {
+            return List.of();
+        }
+        if (reasoning == null || reasoning.isEmpty()) {
+            return List.of(new RagStreamChunk("token", answer));
+        }
+        if (answer == null || answer.isEmpty()) {
+            return List.of(new RagStreamChunk("reasoning", reasoning));
+        }
+        return List.of(new RagStreamChunk("reasoning", reasoning), new RagStreamChunk("token", answer));
+    }
+
+    private static String reasoningText(AssistantMessage message) {
+        return firstMetadataText(message, "reasoningContent", "reasoning_content", "reasoning");
+    }
+
+    private static String firstMetadataText(AssistantMessage message, String... keys) {
+        for (String key : keys) {
+            String value = metadataText(message, key);
+            if (value != null && !value.isEmpty()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private static String metadataText(AssistantMessage message, String key) {
+        Object value = message.getMetadata().get(key);
+        return value == null ? null : value.toString();
+    }
+
+    private static void logStreamResponse(ChatResponse response) {
+        if (!log.isDebugEnabled() || response == null || response.getResult() == null || response.getResult().getOutput() == null) {
+            return;
+        }
+        AssistantMessage output = response.getResult().getOutput();
+        String reasoning = reasoningText(output);
+        String answer = output.getText();
+        log.debug("RAG stream response metadataKeys={}, reasoningChars={}, answerChars={}",
+                output.getMetadata().keySet(), safeLength(reasoning), safeLength(answer));
+    }
+
+    private static int safeLength(String text) {
+        return text == null ? 0 : text.length();
     }
 
     private static String snippet(String text) {
