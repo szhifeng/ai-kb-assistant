@@ -1,28 +1,55 @@
 spring:
   application:
     name: ai-kb-assistant
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
   datasource:
     url: jdbc:postgresql://localhost:5432/kb
     username: ${DB_USER:postgres}
     password: ${DB_PASSWORD:postgres}
+  flyway:
+    baseline-on-migrate: true
+    locations: classpath:db/migration
   data:
     redis:
       host: localhost
       port: 6379
   ai:
-    openai:
-      api-key: ${OPENAI_API_KEY}
-      embedding:
-        model: text-embedding-3-small
-    deepseek:
-      api-key: ${DEEPSEEK_API_KEY}
-      chat:
-        model: deepseek-chat
+    model:
+      embedding: openai
     vectorstore:
       pgvector:
-        index-type: HNSW
-        distance-type: COSINE_DISTANCE
-        initialize-schema: true
+        index-type: HNSW                 # 快速近似搜索索引
+        distance-type: COSINE_DISTANCE   # 余弦相似度，文本语义检索首选
+        initialize-schema: false         # schema 由 Flyway 统一管理，避免运行期隐式建表
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY}
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+      chat:
+        model: deepseek-v4-flash
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}   # OpenAI-compatible 地址
+      chat:
+        model: qwen3.7-plus
+      embedding:
+        metadata-mode: embed             # 元数据模式：embed / none / all
+        options:
+          model: text-embedding-v4       # 嵌入模型名称
+          dimensions: 2048               # 输出向量维度（需与 vector_store 表 VECTOR(2048) 一致）
+          encoding-format: float         # 编码格式：float 或 base64
+
+logging:
+  level:
+    org.springframework.ai: debug
+    org.springframework.ai.openai: debug
+    org.springframework.ai.vectorstore: debug
+    org.springframework.ai.chat.client.advisor: debug
+    com.openai: debug
+    org.springframework.web.reactive.function.client: debug
+#    reactor.netty.http.client: debug
 
 kb:
   ratelimit:

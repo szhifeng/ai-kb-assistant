@@ -1,6 +1,7 @@
 package com.fox.aikbassistant.service;
 
 import com.fox.aikbassistant.model.Citation;
+import com.fox.aikbassistant.service.impl.RagChatServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.document.Document;
 
@@ -18,7 +19,7 @@ class RagChatServiceTest {
                 .metadata(Map.of("source", "ai.md"))
                 .build();
 
-        List<Citation> citations = RagChatService.toCitations(List.of(doc));
+        List<Citation> citations = RagChatServiceImpl.toCitations(List.of(doc));
 
         assertThat(citations).hasSize(1);
         assertThat(citations.get(0).source()).isEqualTo("ai.md");
@@ -31,7 +32,7 @@ class RagChatServiceTest {
                 .text("无来源元数据的内容。")
                 .build();
 
-        List<Citation> citations = RagChatService.toCitations(List.of(doc));
+        List<Citation> citations = RagChatServiceImpl.toCitations(List.of(doc));
 
         assertThat(citations).hasSize(1);
         assertThat(citations.get(0).source()).isEqualTo("unknown");
