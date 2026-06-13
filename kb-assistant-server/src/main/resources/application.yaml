@@ -28,12 +28,12 @@ spring:
       api-key: ${DEEPSEEK_API_KEY}
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
       chat:
-        model: deepseek-v4-flash
+        model: ${DEEPSEEK_MODEL:deepseek-v4-pro}
     openai:
       api-key: ${OPENAI_API_KEY}
       base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}   # OpenAI-compatible 地址
       chat:
-        model: qwen3.7-plus
+        model: ${OPENAI_MODEL:qwen3.7-plus}
       embedding:
         metadata-mode: embed             # 元数据模式：embed / none / all
         options:
@@ -58,4 +58,4 @@ kb:
     overflow-strategy: reject
 
 tavily:
-  api-key: ${TAVILY_API_KEY:}
+  api-key: ${TAVILY_API_KEY}
