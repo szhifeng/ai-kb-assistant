@@ -7,6 +7,7 @@ public record ChatMessage(
         String id,
         String role,
         String content,
+        String reasoning,
         List<Citation> citations,
         Instant createdAt,
         String mode,

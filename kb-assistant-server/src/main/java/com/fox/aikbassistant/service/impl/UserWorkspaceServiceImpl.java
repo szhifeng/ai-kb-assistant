@@ -87,7 +87,7 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
     @Override
     public List<ChatMessage> listMessages(String email, String sessionId) {
         return jdbcTemplate.query("""
-                SELECT id, role, content, citations_json, created_at, mode, web_search_enabled, error
+                SELECT id, role, content, reasoning, citations_json, created_at, mode, web_search_enabled, error
                 FROM kb_chat_message
                 WHERE email = ? AND session_id = ?
                 ORDER BY created_at ASC
@@ -100,10 +100,10 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
         ensureSession(normalized, sessionId);
         jdbcTemplate.update("""
                 INSERT INTO kb_chat_message
-                (id, email, session_id, role, content, citations_json, created_at, mode, web_search_enabled, error)
-                VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+                (id, email, session_id, role, content, reasoning, citations_json, created_at, mode, web_search_enabled, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
                 """,
-                message.id(), normalized, sessionId, message.role(), message.content(), writeCitations(message.citations()),
+                message.id(), normalized, sessionId, message.role(), message.content(), message.reasoning(), writeCitations(message.citations()),
                 Timestamp.from(message.createdAt()), message.mode(), message.webSearchEnabled(), message.error());
         jdbcTemplate.update("UPDATE kb_conversation_session SET updated_at = now() WHERE email = ? AND id = ?", normalized, sessionId);
     }
@@ -134,6 +134,7 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
                 rs.getString("id"),
                 rs.getString("role"),
                 rs.getString("content"),
+                rs.getString("reasoning"),
                 readCitations(rs.getString("citations_json")),
                 toInstant(rs, "created_at"),
                 rs.getString("mode"),
